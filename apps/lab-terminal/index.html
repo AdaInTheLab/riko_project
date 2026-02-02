@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LAB_TERMINAL // CONNECTED</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        amber: {
+                            400: '#FFBF00', // Base Amber
+                            500: '#E6AC00',
+                            900: '#332600',
+                        },
+                        lab: {
+                            bg: '#0F1012', // Deep dark grey/black
+                            panel: '#1A1C1E', // Slightly lighter panel
+                            text: '#A0A0A0', // Dimmed text
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['"Fira Code"', 'monospace', 'ui-monospace', 'SFMono-Regular']
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0F1012; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #332600; 
+            border: 1px solid #FFBF00;
+        }
+
+        /* Golden Hour Glow */
+        .glow-text {
+            text-shadow: 0 0 5px rgba(255, 191, 0, 0.5);
+        }
+        .glow-border {
+            box-shadow: 0 0 8px rgba(255, 191, 0, 0.3);
+            border: 1px solid #FFBF00;
+        }
+        .glow-active:focus {
+            box-shadow: 0 0 15px rgba(255, 191, 0, 0.4);
+            border-color: #FFBF00;
+            outline: none;
+        }
+        
+        /* CRT/Scanline effect overlay (subtle) */
+        .scanline {
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.1) 50%,
+                rgba(0,0,0,0.1)
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+        }
+        
+        /* Message Animation */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .message-anim {
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="bg-lab-bg text-lab-text font-mono h-screen flex flex-col overflow-hidden relative selection:bg-amber-400 selection:text-black">
+
+    <!-- Scanline Overlay -->
+    <div class="absolute inset-0 scanline z-50 pointer-events-none opacity-20"></div>
+
+    <!-- Header -->
+    <header class="h-14 border-b border-amber-400/30 flex items-center justify-between px-6 bg-lab-panel z-10 shrink-0">
+        <div class="flex items-center gap-3">
+            <div class="w-3 h-3 bg-amber-400 rounded-full shadow-[0_0_10px_#FFBF00]"></div>
+            <h1 class="text-amber-400 font-bold tracking-widest glow-text">LAB_TERMINAL_V1</h1>
+        </div>
+        <div class="flex items-center gap-4 text-xs">
+            <div id="connection-status" class="text-red-500 tracking-wider">DISCONNECTED</div>
+            <div class="text-amber-400/50">PORT: 8080</div>
+        </div>
+    </header>
+
+    <!-- Main Chat Area -->
+    <main id="chat-container" class="flex-1 overflow-y-auto p-6 space-y-4 relative z-0">
+        <!-- System Message -->
+        <div class="text-center py-4 opacity-50 text-xs tracking-widest border-b border-dashed border-gray-800 mb-6">
+            // SYSTEM INITIALIZED. WAITING FOR INPUT...
+        </div>
+        
+        <!-- Messages will be injected here -->
+    </main>
+
+    <!-- Input Area -->
+    <footer class="p-6 bg-lab-panel border-t border-amber-400/20 z-10 shrink-0">
+        <form id="chat-form" class="flex gap-4">
+            <div class="relative flex-1">
+                <span class="absolute left-4 top-1/2 -translate-y-1/2 text-amber-400 font-bold">></span>
+                <input 
+                    type="text" 
+                    id="message-input" 
+                    autocomplete="off"
+                    placeholder="ENTER COMMAND OR TRANSMISSION..." 
+                    class="w-full bg-lab-bg border border-gray-700 rounded-none py-3 pl-10 pr-4 text-amber-100 placeholder-gray-600 focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-all glow-active"
+                >
+            </div>
+            <button 
+                type="submit" 
+                class="bg-amber-400/10 border border-amber-400 text-amber-400 px-8 py-2 hover:bg-amber-400 hover:text-black transition-all uppercase tracking-wider text-sm font-bold glow-border"
+            >
+                Send
+            </button>
+        </form>
+    </footer>
+
+    <script>
+        const chatContainer = document.getElementById('chat-container');
+        const chatForm = document.getElementById('chat-form');
+        const messageInput = document.getElementById('message-input');
+        const statusIndicator = document.getElementById('connection-status');
+        const statusDot = document.querySelector('.bg-amber-400'); // The header dot
+
+        let socket;
+        let retryCount = 0;
+
+        function connect() {
+            // Determine protocol (ws or wss) based on current page
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            // Connect to the same host/port we are served from, or fallback to localhost:8080
+            const host = window.location.host || 'localhost:8080';
+            socket = new WebSocket(`${protocol}//${host}/ws`);
+
+            socket.onopen = () => {
+                statusIndicator.textContent = 'CONNECTED :: 100%';
+                statusIndicator.classList.remove('text-red-500');
+                statusIndicator.classList.add('text-amber-400', 'glow-text');
+                statusDot.classList.add('animate-pulse');
+                addSystemMessage("CONNECTION ESTABLISHED TO MAINFRAME.");
+                retryCount = 0;
+            };
+
+            socket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'system') {
+                        addSystemMessage(data.text);
+                    } else if (data.type === 'chat') {
+                        addMessage(data.text, 'server', data.sender);
+                    }
+                } catch (e) {
+                    // Fallback for raw text if any
+                    addMessage(event.data, 'server', 'UNKNOWN');
+                }
+            };
+
+            socket.onclose = () => {
+                statusIndicator.textContent = 'DISCONNECTED // RETRYING';
+                statusIndicator.classList.add('text-red-500');
+                statusIndicator.classList.remove('text-amber-400', 'glow-text');
+                statusDot.classList.remove('animate-pulse');
+                addSystemMessage("CONNECTION LOST. ATTEMPTING RECONNECT...");
+                
+                // Exponential backoff
+                const timeout = Math.min(1000 * (2 ** retryCount), 10000);
+                retryCount++;
+                setTimeout(connect, timeout);
+            };
+
+            socket.onerror = (error) => {
+                console.error("WebSocket Error:", error);
+            };
+        }
+
+        function addMessage(text, type, senderName = 'SYS_CORE') {
+            const div = document.createElement('div');
+            div.className = `flex ${type === 'user' ? 'justify-end' : 'justify-start'} message-anim`;
+            
+            const bubble = document.createElement('div');
+            bubble.className = `max-w-[70%] p-4 border ${
+                type === 'user' 
+                    ? 'border-amber-400 bg-amber-400/10 text-amber-50 shadow-[0_0_15px_rgba(255,191,0,0.1)]' 
+                    : 'border-gray-700 bg-gray-900 text-gray-300'
+            }`;
+            
+            // Timestamp
+            const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const meta = document.createElement('div');
+            meta.className = "text-[10px] tracking-widest opacity-50 mb-1 flex justify-between gap-4";
+            meta.innerHTML = `<span>${type === 'user' ? 'USER_ID_01' : senderName}</span><span>${time}</span>`;
+
+            const content = document.createElement('div');
+            content.className = "text-sm leading-relaxed whitespace-pre-wrap";
+            content.textContent = text;
+
+            bubble.appendChild(meta);
+            bubble.appendChild(content);
+            div.appendChild(bubble);
+            
+            chatContainer.appendChild(div);
+            scrollToBottom();
+        }
+
+        function addSystemMessage(text) {
+            const div = document.createElement('div');
+            div.className = "text-center py-2 opacity-50 text-xs text-amber-400/70 tracking-widest message-anim";
+            div.textContent = `// ${text}`;
+            chatContainer.appendChild(div);
+            scrollToBottom();
+        }
+
+        function scrollToBottom() {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const message = messageInput.value.trim();
+            if (message && socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(message);
+                addMessage(message, 'user');
+                messageInput.value = '';
+            }
+        });
+
+        // Initialize connection
+        connect();
+    </script>
+</body>
+</html>
