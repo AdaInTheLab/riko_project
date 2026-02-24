@@ -148,6 +148,9 @@ wss.on('connection', (ws, req) => {
 
 app.use(express.json());
 
+// Serve reaction audio files
+app.use('/reactions', express.static(join(__dirname, 'overlay', 'reactions')));
+
 // POST /api/sage/speak — trigger Sage overlay text
 app.post('/api/sage/speak', (req, res) => {
   const { text, scared } = req.body;

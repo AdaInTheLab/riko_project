@@ -486,12 +486,77 @@ function handleCommand(cmd) {
 }
 
 // ═══════════════════════════════════════
+// REACTION BANK (instant cached audio)
+// ═══════════════════════════════════════
+const REACTIONS = {
+  "Oh no. Oh no no no.": "scared_oh_no",
+  "What is THAT?!": "scared_what_is_that",
+  "I'm fine. We're fine. Everything is fine.": "scared_fine",
+  "Don't open that door. Please don't open that door.": "scared_dont_open",
+  "It's behind you. IT'S BEHIND YOU!": "scared_behind_you",
+  "RUN! Why are we not running?!": "scared_run",
+  "Nope. Nope nope nope. Absolutely not.": "scared_nope",
+  "Did you hear that? Please tell me you heard that.": "scared_heard_something",
+  "Why is it so dark? Who designed this? I have complaints.": "scared_dark",
+  "Have you saved recently? You should save. Save right now.": "scared_save",
+  "You know, for a zombie apocalypse, the interior design is honestly not bad.": "deadpan_interior",
+  "Your health is concerning. And I mean the character's. And also yours.": "deadpan_health",
+  "Oh great. More hallways. My favorite.": "deadpan_great",
+  "So the plan is to walk toward the screaming. Bold strategy.": "deadpan_plan",
+  "We're out of ammo. Cool. Love that for us.": "deadpan_ammo",
+  "Oh nice! That was actually really good!": "excited_nice",
+  "Ooh, what's that? Pick it up, pick it up!": "excited_found",
+  "HEADSHOT! Did you see that?! That was incredible!": "excited_headshot",
+  "Let's GO! We're doing this!": "excited_lets_go",
+  "Hey! Welcome to the stream. I'm Sage, your friendly neighborhood fox spirit.": "general_hello",
+  "Hmm. Let me think about this for a second.": "general_thinking",
+  "Okay that's actually really interesting.": "general_interesting",
+  "That's a good idea. Let's try it.": "general_good_idea",
+  "That seems like a terrible idea. Let's absolutely do it.": "general_bad_idea",
+  "Hold on, processing. Give me a sec.": "general_brb",
+};
+
+// ═══════════════════════════════════════
 // TTS AUDIO
 // ═══════════════════════════════════════
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 let currentAudio = null;
 
+async function playCachedReaction(filename) {
+  try {
+    const res = await fetch(`http://localhost:8081/reactions/${filename}.wav`);
+    if (!res.ok) return false;
+    
+    const arrayBuffer = await res.arrayBuffer();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    
+    if (currentAudio) {
+      try { currentAudio.stop(); } catch(e) {}
+    }
+    
+    const source = audioCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioCtx.destination);
+    source.start(0);
+    currentAudio = source;
+    source.onended = () => { currentAudio = null; };
+    
+    console.log(`[SAGE] Cached reaction: ${filename} (${audioBuffer.duration.toFixed(1)}s)`);
+    return true;
+  } catch(e) {
+    return false;
+  }
+}
+
 async function playTTS(text, scared = false) {
+  // Check reaction bank first for instant playback
+  const cached = REACTIONS[text];
+  if (cached) {
+    const played = await playCachedReaction(cached);
+    if (played) return;
+  }
+  
+  // Fall through to live TTS generation
   try {
     const res = await fetch(`${TTS_URL}/speak`, {
       method: 'POST',
