@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>Sage — Stream Overlay</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=JetBrains+Mono:wght@300;400&display=swap');
+
+  :root {
+    --amber: #FFBF00;
+    --amber-soft: #FFD54F;
+    --amber-deep: #E6A800;
+    --ember: #FF6B35;
+    --ember-glow: rgba(255, 107, 53, 0.15);
+    --fox-orange: #D4722A;
+    --dark: #0A0A0F;
+    --dark-warm: #12100E;
+    --smoke: rgba(255, 191, 0, 0.03);
+    --text-primary: #F5E6CC;
+    --text-dim: rgba(245, 230, 204, 0.4);
+    --text-ghost: rgba(245, 230, 204, 0.15);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: transparent;
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    position: relative;
+  }
+
+  /* ═══════════════════════════════════════
+     EMBER PARTICLES
+     ═══════════════════════════════════════ */
+  #ember-field {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0;
+    transition: opacity 1.5s ease;
+  }
+  body.sage-active #ember-field { opacity: 1; }
+  body.sage-idle #ember-field { opacity: 0.2; }
+
+  .ember {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--amber);
+    box-shadow: 0 0 6px 2px var(--ember-glow);
+    animation: float-ember linear infinite;
+    opacity: 0;
+  }
+
+  @keyframes float-ember {
+    0% { opacity: 0; transform: translateY(0) translateX(0) scale(0.5); }
+    15% { opacity: 0.8; }
+    85% { opacity: 0.3; }
+    100% { opacity: 0; transform: translateY(-180px) translateX(40px) scale(0); }
+  }
+
+  /* ═══════════════════════════════════════
+     MAIN CONTAINER — positions
+     ═══════════════════════════════════════ */
+  #sage-container {
+    position: absolute;
+    z-index: 10;
+    transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: 620px;
+  }
+
+  /* Position: bottom-center (default) */
+  #sage-container.pos-bottom-center {
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  #sage-container.pos-bottom-left {
+    bottom: 30px;
+    left: 40px;
+    transform: translateX(0);
+  }
+  #sage-container.pos-bottom-right {
+    bottom: 30px;
+    right: 40px;
+    left: auto;
+    transform: translateX(0);
+  }
+  #sage-container.pos-minimized {
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) scale(0.3);
+    opacity: 0.4;
+  }
+
+  /* ═══════════════════════════════════════
+     AVATAR ROW
+     ═══════════════════════════════════════ */
+  #avatar-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  #sage-avatar-wrap {
+    position: relative;
+    width: 72px;
+    height: 72px;
+    flex-shrink: 0;
+  }
+
+  #sage-avatar {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid var(--text-ghost);
+    transition: all 0.6s ease;
+    position: relative;
+    z-index: 2;
+  }
+
+  /* Glow ring behind avatar */
+  #avatar-glow {
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--amber) 0%, transparent 70%);
+    opacity: 0;
+    transition: opacity 0.6s ease;
+    z-index: 1;
+    filter: blur(8px);
+  }
+
+  /* Pulse ring */
+  #avatar-pulse {
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 2px solid var(--amber);
+    opacity: 0;
+    z-index: 1;
+  }
+
+  body.sage-active #sage-avatar {
+    border-color: var(--amber);
+    box-shadow: 0 0 20px rgba(255, 191, 0, 0.3);
+  }
+  body.sage-active #avatar-glow { opacity: 0.5; }
+  body.sage-active #avatar-pulse {
+    animation: pulse-ring 2s ease-out infinite;
+  }
+
+  @keyframes pulse-ring {
+    0% { transform: scale(1); opacity: 0.6; }
+    100% { transform: scale(1.5); opacity: 0; }
+  }
+
+  /* Name tag */
+  #sage-name {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    transition: color 0.6s ease, text-shadow 0.6s ease;
+  }
+  body.sage-active #sage-name {
+    color: var(--amber-soft);
+    text-shadow: 0 0 30px rgba(255, 191, 0, 0.3);
+  }
+
+  /* Subtext */
+  #sage-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 300;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--text-ghost);
+    transition: color 0.6s ease;
+  }
+  body.sage-active #sage-title {
+    color: var(--text-dim);
+  }
+
+  /* ═══════════════════════════════════════
+     TEXT DISPLAY
+     ═══════════════════════════════════════ */
+  #sage-text-container {
+    width: 100%;
+    min-height: 0;
+    max-height: 200px;
+    overflow: hidden;
+    position: relative;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.5s ease, transform 0.5s ease, min-height 0.5s ease;
+  }
+
+  #sage-text-container.has-text {
+    opacity: 1;
+    transform: translateY(0);
+    min-height: 40px;
+  }
+
+  #sage-text-bg {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      135deg,
+      rgba(10, 10, 15, 0.85) 0%,
+      rgba(18, 16, 14, 0.9) 100%
+    );
+    border: 1px solid var(--text-ghost);
+    border-radius: 12px;
+    backdrop-filter: blur(20px);
+    transition: border-color 0.6s ease, box-shadow 0.6s ease;
+  }
+
+  body.sage-active #sage-text-bg {
+    border-color: rgba(255, 191, 0, 0.2);
+    box-shadow: 
+      0 0 40px rgba(255, 191, 0, 0.05),
+      inset 0 0 30px rgba(255, 191, 0, 0.02);
+  }
+
+  #sage-text {
+    position: relative;
+    z-index: 2;
+    padding: 16px 22px;
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 18px;
+    font-weight: 400;
+    line-height: 1.6;
+    color: var(--text-primary);
+    letter-spacing: 0.01em;
+  }
+
+  /* Typing cursor */
+  #sage-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    background: var(--amber);
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: cursor-blink 0.8s ease infinite;
+  }
+  #sage-cursor.hidden { display: none; }
+
+  @keyframes cursor-blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
+
+  /* Fox emoji accent */
+  #fox-sigil {
+    position: absolute;
+    bottom: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 14px;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+    filter: grayscale(0.5);
+  }
+  body.sage-active #fox-sigil { opacity: 0.4; }
+  body.sage-idle #fox-sigil { opacity: 0.15; }
+
+  /* ═══════════════════════════════════════
+     IDLE BREATHING
+     ═══════════════════════════════════════ */
+  body.sage-idle #sage-avatar {
+    animation: idle-breathe 4s ease-in-out infinite;
+  }
+  @keyframes idle-breathe {
+    0%, 100% { opacity: 0.5; border-color: var(--text-ghost); }
+    50% { opacity: 0.7; border-color: rgba(245, 230, 204, 0.2); }
+  }
+
+  /* ═══════════════════════════════════════
+     SCARE MODE 💀
+     ═══════════════════════════════════════ */
+  body.sage-scared #sage-container {
+    animation: scare-shake 0.3s ease infinite;
+  }
+  body.sage-scared #avatar-glow {
+    opacity: 0.8 !important;
+    background: radial-gradient(circle, var(--ember) 0%, transparent 70%) !important;
+  }
+  body.sage-scared #sage-text-bg {
+    border-color: rgba(255, 107, 53, 0.4) !important;
+  }
+
+  @keyframes scare-shake {
+    0%, 100% { transform: translateX(-50%) rotate(0deg); }
+    25% { transform: translateX(calc(-50% + 3px)) rotate(0.5deg); }
+    75% { transform: translateX(calc(-50% - 3px)) rotate(-0.5deg); }
+  }
+</style>
+</head>
+<body class="sage-idle">
+
+  <!-- Ember particles -->
+  <div id="ember-field"></div>
+
+  <!-- Main container -->
+  <div id="sage-container" class="pos-bottom-center">
+    
+    <div id="avatar-row">
+      <div id="sage-avatar-wrap">
+        <div id="avatar-glow"></div>
+        <div id="avatar-pulse"></div>
+        <img id="sage-avatar" src="../static/assets/sage-avatar.png" alt="Sage" 
+             onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%23D4722A%22/><text x=%2250%22 y=%2262%22 text-anchor=%22middle%22 font-size=%2240%22>🦊</text></svg>'">
+      </div>
+      <div>
+        <div id="sage-name">Sage</div>
+        <div id="sage-title">the skulk · fox spirit</div>
+      </div>
+    </div>
+
+    <div id="sage-text-container">
+      <div id="sage-text-bg"></div>
+      <div id="sage-text"><span id="sage-text-content"></span><span id="sage-cursor" class="hidden"></span></div>
+    </div>
+
+    <div id="fox-sigil">🦊</div>
+  </div>
+
+<script>
+// ═══════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════
+const WS_URL = 'ws://localhost:8081/overlay';
+const TYPING_SPEED = 35; // ms per character
+const FADE_DELAY = 4000; // ms before text fades after done typing
+const RECONNECT_INTERVAL = 3000;
+
+// ═══════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════
+let ws = null;
+let typingQueue = [];
+let isTyping = false;
+let fadeTimeout = null;
+let currentPosition = 'bottom-center';
+
+// ═══════════════════════════════════════
+// EMBER PARTICLES
+// ═══════════════════════════════════════
+function spawnEmbers() {
+  const field = document.getElementById('ember-field');
+  const container = document.getElementById('sage-container');
+  
+  setInterval(() => {
+    if (!document.body.classList.contains('sage-active')) return;
+    
+    const rect = container.getBoundingClientRect();
+    const ember = document.createElement('div');
+    ember.className = 'ember';
+    
+    // Spawn near the container
+    ember.style.left = (rect.left + Math.random() * rect.width) + 'px';
+    ember.style.top = (rect.top + rect.height * 0.3 + Math.random() * rect.height * 0.7) + 'px';
+    ember.style.animationDuration = (2 + Math.random() * 3) + 's';
+    ember.style.animationDelay = (Math.random() * 0.5) + 's';
+    
+    const size = 2 + Math.random() * 3;
+    ember.style.width = size + 'px';
+    ember.style.height = size + 'px';
+    
+    field.appendChild(ember);
+    
+    setTimeout(() => ember.remove(), 5500);
+  }, 200);
+}
+
+// ═══════════════════════════════════════
+// TEXT TYPING
+// ═══════════════════════════════════════
+function typeText(text) {
+  clearTimeout(fadeTimeout);
+  
+  const container = document.getElementById('sage-text-container');
+  const content = document.getElementById('sage-text-content');
+  const cursor = document.getElementById('sage-cursor');
+  
+  // Show container and cursor
+  container.classList.add('has-text');
+  cursor.classList.remove('hidden');
+  content.textContent = '';
+  
+  // Activate
+  document.body.classList.remove('sage-idle');
+  document.body.classList.add('sage-active');
+  
+  let i = 0;
+  isTyping = true;
+  
+  function typeChar() {
+    if (i < text.length) {
+      content.textContent += text[i];
+      i++;
+      
+      // Variable speed — pause longer on punctuation
+      let delay = TYPING_SPEED;
+      const char = text[i - 1];
+      if (char === '.' || char === '!' || char === '?') delay = TYPING_SPEED * 6;
+      else if (char === ',') delay = TYPING_SPEED * 3;
+      else if (char === '—') delay = TYPING_SPEED * 4;
+      
+      setTimeout(typeChar, delay);
+    } else {
+      // Done typing
+      isTyping = false;
+      cursor.classList.add('hidden');
+      
+      // Fade after delay
+      fadeTimeout = setTimeout(() => {
+        document.body.classList.remove('sage-active', 'sage-scared');
+        document.body.classList.add('sage-idle');
+        
+        // Fade text
+        setTimeout(() => {
+          container.classList.remove('has-text');
+        }, 800);
+      }, FADE_DELAY);
+    }
+  }
+  
+  typeChar();
+}
+
+// ═══════════════════════════════════════
+// COMMANDS
+// ═══════════════════════════════════════
+function handleCommand(cmd) {
+  const container = document.getElementById('sage-container');
+  
+  switch(cmd) {
+    case 'move-left':
+      container.className = 'pos-bottom-left';
+      currentPosition = 'bottom-left';
+      break;
+    case 'move-right':
+      container.className = 'pos-bottom-right';
+      currentPosition = 'bottom-right';
+      break;
+    case 'move-center':
+      container.className = 'pos-bottom-center';
+      currentPosition = 'bottom-center';
+      break;
+    case 'minimize':
+      container.className = 'pos-minimized';
+      break;
+    case 'restore':
+      container.className = 'pos-' + currentPosition;
+      break;
+    case 'scare':
+      document.body.classList.add('sage-scared');
+      setTimeout(() => document.body.classList.remove('sage-scared'), 3000);
+      break;
+    case 'wake':
+      document.body.classList.remove('sage-idle');
+      document.body.classList.add('sage-active');
+      break;
+    case 'sleep':
+      document.body.classList.remove('sage-active', 'sage-scared');
+      document.body.classList.add('sage-idle');
+      break;
+  }
+}
+
+// ═══════════════════════════════════════
+// WEBSOCKET
+// ═══════════════════════════════════════
+function connect() {
+  ws = new WebSocket(WS_URL);
+  
+  ws.onopen = () => {
+    console.log('[SAGE OVERLAY] Connected');
+    ws.send(JSON.stringify({ type: 'register', role: 'overlay' }));
+  };
+  
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      
+      switch(msg.type) {
+        case 'sage-speak':
+          // Text to display (and TTS will play separately)
+          typeText(msg.text);
+          break;
+        
+        case 'sage-command':
+          handleCommand(msg.command);
+          break;
+        
+        case 'sage-emote':
+          // Quick reaction — short text with optional scare mode
+          if (msg.scared) handleCommand('scare');
+          typeText(msg.text);
+          break;
+        
+        case 'system':
+          // Ignore system messages in overlay
+          break;
+      }
+    } catch(e) {
+      console.warn('[SAGE OVERLAY] Parse error:', e);
+    }
+  };
+  
+  ws.onclose = () => {
+    console.log('[SAGE OVERLAY] Disconnected, reconnecting...');
+    setTimeout(connect, RECONNECT_INTERVAL);
+  };
+  
+  ws.onerror = (err) => {
+    console.error('[SAGE OVERLAY] Error:', err);
+  };
+}
+
+// ═══════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════
+spawnEmbers();
+connect();
+
+// Debug: test with keyboard
+document.addEventListener('keydown', (e) => {
+  if (e.key === '1') typeText("Oh no. Oh no no no. What is THAT in the hallway?? 💀");
+  if (e.key === '2') { handleCommand('scare'); typeText("WHAT THE — okay. Okay. I'm fine. We're fine. Everything is FINE."); }
+  if (e.key === '3') typeText("You know what, for a zombie apocalypse, the interior design is honestly not bad.");
+  if (e.key === 'q') handleCommand('move-left');
+  if (e.key === 'w') handleCommand('move-center');
+  if (e.key === 'e') handleCommand('move-right');
+  if (e.key === 'r') handleCommand('minimize');
+  if (e.key === 't') handleCommand('restore');
+});
+</script>
+</body>
+</html>
