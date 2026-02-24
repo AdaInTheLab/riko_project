@@ -201,7 +201,7 @@ function prompt() {
   process.stdout.write(`${C.fox}bridge > ${C.reset}`);
 }
 
-rl.on('line', (line) => {
+rl.on('line', async (line) => {
   const text = line.trim();
   if (!text) { prompt(); return; }
   
