@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sage STT Listener</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400&display=swap');
+  
+  :root {
+    --amber: #FFBF00;
+    --dark: #0A0A0F;
+    --text: #F5E6CC;
+    --dim: rgba(245, 230, 204, 0.4);
+  }
+  
+  body {
+    background: var(--dark);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    padding: 30px;
+    font-size: 14px;
+  }
+  
+  h1 { color: var(--amber); font-size: 18px; font-weight: 400; }
+  
+  #status {
+    padding: 8px 16px;
+    border-radius: 6px;
+    display: inline-block;
+    margin: 10px 0;
+    font-size: 13px;
+  }
+  #status.listening { background: rgba(255, 191, 0, 0.15); color: var(--amber); }
+  #status.stopped { background: rgba(255, 50, 50, 0.15); color: #ff6b6b; }
+  
+  button {
+    background: rgba(255, 191, 0, 0.15);
+    color: var(--amber);
+    border: 1px solid rgba(255, 191, 0, 0.3);
+    padding: 8px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    margin-right: 8px;
+  }
+  button:hover { background: rgba(255, 191, 0, 0.25); }
+  
+  #live-text {
+    margin-top: 20px;
+    padding: 16px;
+    background: rgba(255, 191, 0, 0.05);
+    border: 1px solid rgba(255, 191, 0, 0.1);
+    border-radius: 8px;
+    min-height: 40px;
+    font-size: 16px;
+    color: var(--amber);
+  }
+  
+  #log {
+    margin-top: 20px;
+    max-height: 400px;
+    overflow-y: auto;
+    font-size: 12px;
+    color: var(--dim);
+  }
+  .log-entry { padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .log-entry .sent { color: #4CAF50; }
+  .log-entry .text { color: var(--text); }
+</style>
+</head>
+<body>
+
+<h1>🦊 Sage STT Listener</h1>
+<p style="color: var(--dim);">Captures your mic → transcribes → sends to Sage via Lab Terminal server</p>
+
+<div>
+  <button onclick="startListening()">🎙️ Start Listening</button>
+  <button onclick="stopListening()">⏹️ Stop</button>
+  <button onclick="sendManual()">📝 Send Manual</button>
+</div>
+
+<div id="status" class="stopped">● Not listening</div>
+
+<div id="live-text">Waiting for speech...</div>
+
+<div>
+  <input id="manual-input" type="text" placeholder="Type manually and hit Send Manual..." 
+         style="width: 80%; padding: 8px; margin-top: 10px; background: rgba(255,255,255,0.05); 
+                border: 1px solid rgba(255,255,255,0.1); color: var(--text); border-radius: 6px;
+                font-family: inherit;"
+         onkeydown="if(event.key==='Enter') sendManual()">
+</div>
+
+<div id="log"></div>
+
+<script>
+const SERVER_URL = 'ws://localhost:8081/uplink';
+const API_URL = 'http://localhost:8081/api/sage/speak';
+
+let recognition = null;
+let ws = null;
+let isListening = false;
+
+// ═══════════════════════════════════════
+// WebSocket to Lab Terminal
+// ═══════════════════════════════════════
+function connectWS() {
+  ws = new WebSocket(SERVER_URL);
+  ws.onopen = () => log('Connected to Lab Terminal', 'sent');
+  ws.onclose = () => {
+    log('Disconnected. Reconnecting...', 'sent');
+    setTimeout(connectWS, 3000);
+  };
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'chat') {
+        log(`[${msg.sender}] ${msg.text}`, 'text');
+      }
+    } catch(e) {}
+  };
+}
+
+// ═══════════════════════════════════════
+// Send transcribed text to Sage
+// ═══════════════════════════════════════
+function sendToSage(text) {
+  if (!text.trim()) return;
+  
+  // Send via WebSocket as a chat message
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'stt-input',
+      text: text,
+      source: 'mic'
+    }));
+  }
+  
+  log(`You said: "${text}"`, 'text');
+  log('→ Sent to Sage', 'sent');
+}
+
+// ═══════════════════════════════════════
+// Web Speech API
+// ═══════════════════════════════════════
+function startListening() {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    alert('Speech recognition not supported. Use Chrome!');
+    return;
+  }
+  
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+  
+  let finalTranscript = '';
+  let silenceTimer = null;
+  
+  recognition.onstart = () => {
+    isListening = true;
+    document.getElementById('status').className = 'listening';
+    document.getElementById('status').textContent = '● Listening...';
+    log('Microphone active', 'sent');
+  };
+  
+  recognition.onresult = (event) => {
+    let interim = '';
+    finalTranscript = '';
+    
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        finalTranscript += transcript;
+      } else {
+        interim += transcript;
+      }
+    }
+    
+    // Show live transcription
+    document.getElementById('live-text').textContent = finalTranscript || interim || '...';
+    
+    // When we get a final result, send it after a brief pause
+    // (in case they're still talking)
+    if (finalTranscript) {
+      clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        sendToSage(finalTranscript.trim());
+        finalTranscript = '';
+        document.getElementById('live-text').textContent = 'Listening...';
+      }, 1500); // 1.5s silence = send
+    }
+  };
+  
+  recognition.onerror = (event) => {
+    if (event.error === 'no-speech') return; // Normal, just no sound
+    log(`STT error: ${event.error}`, 'text');
+  };
+  
+  recognition.onend = () => {
+    // Auto-restart if we're supposed to be listening
+    if (isListening) {
+      recognition.start();
+    }
+  };
+  
+  recognition.start();
+}
+
+function stopListening() {
+  isListening = false;
+  if (recognition) recognition.stop();
+  document.getElementById('status').className = 'stopped';
+  document.getElementById('status').textContent = '● Stopped';
+  log('Microphone stopped', 'sent');
+}
+
+function sendManual() {
+  const input = document.getElementById('manual-input');
+  if (input.value.trim()) {
+    sendToSage(input.value.trim());
+    input.value = '';
+  }
+}
+
+// ═══════════════════════════════════════
+// Log
+// ═══════════════════════════════════════
+function log(text, className) {
+  const logEl = document.getElementById('log');
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  const time = new Date().toLocaleTimeString();
+  entry.innerHTML = `<span style="color: var(--dim)">${time}</span> <span class="${className}">${text}</span>`;
+  logEl.prepend(entry);
+}
+
+// Init
+connectWS();
+</script>
+</body>
+</html>
