@@ -4,10 +4,11 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "bridge": "node overlay/sage-bridge.mjs"
+    "bridge": "node overlay/stream-bridge.mjs"
   },
   "dependencies": {
     "express": "^4.21.0",
+    "obs-websocket-js": "^5.0.6",
     "ws": "^8.18.0"
   }
 }

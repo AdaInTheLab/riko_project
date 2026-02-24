@@ -15,7 +15,9 @@
  */
 
 import WebSocket from 'ws';
+import OBSWebSocket from 'obs-websocket-js';
 import readline from 'readline';
+import { writeFileSync, readFileSync } from 'fs';
 
 // ═══════════════════════════════════════
 // CONFIG
@@ -24,6 +26,10 @@ const LAB_TERMINAL_WS = 'ws://localhost:8081/uplink';
 const SAGE_BRAIN_URL = 'http://100.95.82.118:18560'; // Bookstacks via Tailscale
 const TTS_URL = 'http://localhost:8082';
 const OVERLAY_URL = 'http://localhost:8081';
+const OBS_WS_URL = 'ws://192.168.1.168:4455';
+const OBS_WS_PASS = 'kXbDQHYRjbHF35GU';
+const SCREENSHOT_INTERVAL = 15000; // 15 seconds
+const SCREENSHOT_PATH = 'latest_screenshot.jpg';
 
 // Reaction text lookup (reaction key → display text)
 const REACTION_TEXT = {
@@ -113,8 +119,8 @@ async function processInput(text) {
   processing = true;
   console.log(`${C.cyan}  [INPUT] ${text}${C.reset}`);
   
-  // Ask Sage
-  const result = await askSage(text);
+  // Ask Sage (with screenshot context if available)
+  const result = await askSageWithScreenshot(text);
   
   if (!result) {
     processing = false;
@@ -208,6 +214,13 @@ rl.on('line', (line) => {
     return;
   }
   
+  if (text === '/screenshot') {
+    await takeScreenshot();
+    console.log(`${C.green}  Screenshot taken${lastScreenshot ? ' (' + Math.round(lastScreenshot.length/1024) + 'KB)' : ' (none)'}${C.reset}`);
+    prompt();
+    return;
+  }
+  
   if (text === '/health') {
     fetch(`${SAGE_BRAIN_URL}/health`)
       .then(r => r.json())
@@ -223,6 +236,125 @@ rl.on('line', (line) => {
 });
 
 // ═══════════════════════════════════════
+// OBS Screenshots
+// ═══════════════════════════════════════
+const obs = new OBSWebSocket();
+let obsConnected = false;
+let lastScreenshot = null; // base64 jpg data
+
+async function connectOBS() {
+  try {
+    await obs.connect(OBS_WS_URL, OBS_WS_PASS);
+    obsConnected = true;
+    console.log(`${C.green}  [OBS] Connected — screenshots every ${SCREENSHOT_INTERVAL/1000}s${C.reset}`);
+    startScreenshots();
+  } catch(e) {
+    console.log(`${C.red}  [OBS] Failed to connect: ${e.message}${C.reset}`);
+    console.log(`${C.dim}  Retrying in 10s...${C.reset}`);
+    setTimeout(connectOBS, 10000);
+  }
+}
+
+obs.on('ConnectionClosed', () => {
+  obsConnected = false;
+  console.log(`${C.red}  [OBS] Disconnected. Reconnecting...${C.reset}`);
+  setTimeout(connectOBS, 5000);
+});
+
+async function takeScreenshot() {
+  if (!obsConnected) return;
+  
+  try {
+    const response = await obs.call('GetSourceScreenshot', {
+      sourceName: await getCurrentScene(),
+      imageFormat: 'jpg',
+      imageWidth: 640,  // Low res for fast transfer
+      imageHeight: 360,
+      imageCompressionQuality: 50
+    });
+    
+    if (response.imageData) {
+      // Strip data:image/jpg;base64, prefix
+      lastScreenshot = response.imageData.replace(/^data:image\/\w+;base64,/, '');
+      
+      // Save locally for debug
+      writeFileSync(SCREENSHOT_PATH, Buffer.from(lastScreenshot, 'base64'));
+    }
+  } catch(e) {
+    // Try with scene name directly if source fails
+    try {
+      const { currentProgramSceneName } = await obs.call('GetCurrentProgramScene');
+      const response = await obs.call('GetSourceScreenshot', {
+        sourceName: currentProgramSceneName,
+        imageFormat: 'jpg',
+        imageWidth: 640,
+        imageHeight: 360,
+        imageCompressionQuality: 50
+      });
+      if (response.imageData) {
+        lastScreenshot = response.imageData.replace(/^data:image\/\w+;base64,/, '');
+        writeFileSync(SCREENSHOT_PATH, Buffer.from(lastScreenshot, 'base64'));
+      }
+    } catch(e2) {
+      console.log(`${C.dim}  [OBS] Screenshot failed: ${e2.message}${C.reset}`);
+    }
+  }
+}
+
+async function getCurrentScene() {
+  const { currentProgramSceneName } = await obs.call('GetCurrentProgramScene');
+  return currentProgramSceneName;
+}
+
+function startScreenshots() {
+  // Take one immediately
+  takeScreenshot();
+  // Then every interval
+  setInterval(takeScreenshot, SCREENSHOT_INTERVAL);
+}
+
+// ═══════════════════════════════════════
+// Update askSage to include screenshots
+// ═══════════════════════════════════════
+const _originalAskSage = askSage;
+async function askSageWithScreenshot(text, context) {
+  // Upload screenshot to Sage's server if available
+  let screenshotContext = null;
+  
+  if (lastScreenshot) {
+    try {
+      const res = await fetch(`${SAGE_BRAIN_URL}/describe-screenshot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: lastScreenshot }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        screenshotContext = data.description;
+      }
+    } catch(e) {
+      // Screenshot description failed, continue without it
+    }
+  }
+  
+  try {
+    const res = await fetch(`${SAGE_BRAIN_URL}/think`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, context, screenshot: screenshotContext }),
+    });
+    if (!res.ok) throw new Error(`Brain returned ${res.status}`);
+    return await res.json();
+  } catch(e) {
+    console.error(`${C.red}  [BRAIN ERROR] ${e.message}${C.reset}`);
+    return null;
+  }
+}
+
+// Replace askSage in processInput
+const origProcessInput = processInput;
+
+// ═══════════════════════════════════════
 // Start
 // ═══════════════════════════════════════
 console.clear();
@@ -232,9 +364,12 @@ console.log(`${C.fox}
   Lab Terminal:  ${LAB_TERMINAL_WS}
   Sage Brain:    ${SAGE_BRAIN_URL}
   TTS Server:    ${TTS_URL}
+  OBS:           ${OBS_WS_URL}
+  Screenshots:   every ${SCREENSHOT_INTERVAL/1000}s
   ═══════════════════════════════
-  Commands: /reset /health
+  Commands: /reset /health /screenshot
   Type anything to simulate Ada's input
 ${C.reset}`);
 
 connect();
+connectOBS();
