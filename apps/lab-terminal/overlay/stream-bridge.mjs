@@ -112,7 +112,9 @@ function sendToOverlay(text, scared = false, reactionKey = null) {
 // ═══════════════════════════════════════
 async function processInput(text) {
   if (processing) {
-    console.log(`${C.dim}  [BUSY] Still processing, skipping: ${text.substring(0, 40)}${C.reset}`);
+    console.log(`${C.dim}  [BUSY] Still thinking, queued: ${text.substring(0, 40)}${C.reset}`);
+    // Queue it for after current response
+    setTimeout(() => processInput(text), 2000);
     return;
   }
   

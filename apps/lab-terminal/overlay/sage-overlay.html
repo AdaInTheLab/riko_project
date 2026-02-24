@@ -392,8 +392,23 @@ function spawnEmbers() {
 // ═══════════════════════════════════════
 // TEXT TYPING
 // ═══════════════════════════════════════
+let textQueue = [];
+let isTypingText = false;
+
 function typeText(text) {
+  // Queue if already typing
+  if (isTypingText) {
+    textQueue.push(text);
+    console.log(`[SAGE] Text queued (${textQueue.length} waiting): ${text.substring(0, 40)}`);
+    return;
+  }
+  
+  _doTypeText(text);
+}
+
+function _doTypeText(text) {
   clearTimeout(fadeTimeout);
+  isTypingText = true;
   
   const container = document.getElementById('sage-text-container');
   const content = document.getElementById('sage-text-content');
@@ -409,7 +424,6 @@ function typeText(text) {
   document.body.classList.add('sage-active');
   
   let i = 0;
-  isTyping = true;
   
   function typeChar() {
     if (i < text.length) {
@@ -426,19 +440,27 @@ function typeText(text) {
       setTimeout(typeChar, delay);
     } else {
       // Done typing
-      isTyping = false;
       cursor.classList.add('hidden');
       
-      // Fade after delay
-      fadeTimeout = setTimeout(() => {
-        document.body.classList.remove('sage-active', 'sage-scared');
-        document.body.classList.add('sage-idle');
-        
-        // Fade text
+      // Check queue for next text
+      if (textQueue.length > 0) {
+        // Brief pause then show next
         setTimeout(() => {
-          container.classList.remove('has-text');
-        }, 800);
-      }, FADE_DELAY);
+          _doTypeText(textQueue.shift());
+        }, 1000);
+      } else {
+        isTypingText = false;
+        
+        // Fade after delay
+        fadeTimeout = setTimeout(() => {
+          document.body.classList.remove('sage-active', 'sage-scared');
+          document.body.classList.add('sage-idle');
+          
+          setTimeout(() => {
+            container.classList.remove('has-text');
+          }, 800);
+        }, FADE_DELAY);
+      }
     }
   }
   
