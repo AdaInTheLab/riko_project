@@ -22,7 +22,16 @@ from typing import Optional
 import uvicorn
 import time
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(title="Sage TTS Server")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ═══════════════════════════════════════
 # Model loading (once at startup)
