@@ -521,15 +521,33 @@ const REACTIONS = {
 // ═══════════════════════════════════════
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 let currentAudio = null;
+let audioQueue = [];
+let isPlayingAudio = false;
 
 async function playCachedReaction(filename) {
+  // Add to queue instead of playing immediately
+  audioQueue.push(filename);
+  if (!isPlayingAudio) processAudioQueue();
+  return true;
+}
+
+async function processAudioQueue() {
+  if (audioQueue.length === 0) {
+    isPlayingAudio = false;
+    return;
+  }
+  
+  isPlayingAudio = true;
+  const filename = audioQueue.shift();
+  
   try {
     const res = await fetch(`http://localhost:8081/reactions/${filename}.wav`);
-    if (!res.ok) return false;
+    if (!res.ok) { processAudioQueue(); return; }
     
     const arrayBuffer = await res.arrayBuffer();
     const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
     
+    // Stop any current playback
     if (currentAudio) {
       try { currentAudio.stop(); } catch(e) {}
     }
@@ -539,12 +557,18 @@ async function playCachedReaction(filename) {
     source.connect(audioCtx.destination);
     source.start(0);
     currentAudio = source;
-    source.onended = () => { currentAudio = null; };
     
-    console.log(`[SAGE] Cached reaction: ${filename} (${audioBuffer.duration.toFixed(1)}s)`);
-    return true;
+    console.log(`[SAGE] Playing: ${filename} (${audioBuffer.duration.toFixed(1)}s) | Queue: ${audioQueue.length}`);
+    
+    // Wait for audio to finish before playing next
+    source.onended = () => {
+      currentAudio = null;
+      // Small gap between reactions
+      setTimeout(processAudioQueue, 300);
+    };
   } catch(e) {
-    return false;
+    console.warn(`[SAGE] Audio failed: ${filename}`, e);
+    processAudioQueue();
   }
 }
 
