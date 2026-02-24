@@ -345,6 +345,7 @@
 // CONFIG
 // ═══════════════════════════════════════
 const WS_URL = 'ws://localhost:8081/overlay';
+const TTS_URL = 'http://localhost:8082';
 const TYPING_SPEED = 35; // ms per character
 const FADE_DELAY = 4000; // ms before text fades after done typing
 const RECONNECT_INTERVAL = 3000;
@@ -485,6 +486,50 @@ function handleCommand(cmd) {
 }
 
 // ═══════════════════════════════════════
+// TTS AUDIO
+// ═══════════════════════════════════════
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let currentAudio = null;
+
+async function playTTS(text, scared = false) {
+  try {
+    const res = await fetch(`${TTS_URL}/speak`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, scared })
+    });
+    
+    if (!res.ok) {
+      console.warn('[SAGE TTS] Server error:', res.status);
+      return;
+    }
+    
+    const arrayBuffer = await res.arrayBuffer();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    
+    // Stop any current playback
+    if (currentAudio) {
+      try { currentAudio.stop(); } catch(e) {}
+    }
+    
+    const source = audioCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioCtx.destination);
+    source.start(0);
+    currentAudio = source;
+    
+    // Keep overlay active for duration of audio
+    source.onended = () => {
+      currentAudio = null;
+    };
+    
+    console.log(`[SAGE TTS] Playing ${audioBuffer.duration.toFixed(1)}s`);
+  } catch(e) {
+    console.warn('[SAGE TTS] Failed:', e.message);
+  }
+}
+
+// ═══════════════════════════════════════
 // WEBSOCKET
 // ═══════════════════════════════════════
 function connect() {
@@ -501,8 +546,9 @@ function connect() {
       
       switch(msg.type) {
         case 'sage-speak':
-          // Text to display (and TTS will play separately)
+          // Text to display + TTS audio
           typeText(msg.text);
+          if (msg.tts !== false) playTTS(msg.text, false);
           break;
         
         case 'sage-command':
@@ -513,6 +559,7 @@ function connect() {
           // Quick reaction — short text with optional scare mode
           if (msg.scared) handleCommand('scare');
           typeText(msg.text);
+          if (msg.tts !== false) playTTS(msg.text, !!msg.scared);
           break;
         
         case 'system':
