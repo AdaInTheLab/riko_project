@@ -611,9 +611,13 @@ function connect() {
       
       switch(msg.type) {
         case 'sage-speak':
-          // Text to display + TTS audio
+          // Text to display + optional TTS
           typeText(msg.text);
-          if (msg.tts !== false) playTTS(msg.text, false);
+          if (msg.reaction) {
+            // Cached reaction — play instantly
+            playCachedReaction(msg.reaction);
+          }
+          // No live TTS for custom lines (too slow) — text only
           break;
         
         case 'sage-command':
@@ -624,7 +628,9 @@ function connect() {
           // Quick reaction — short text with optional scare mode
           if (msg.scared) handleCommand('scare');
           typeText(msg.text);
-          if (msg.tts !== false) playTTS(msg.text, !!msg.scared);
+          if (msg.reaction) {
+            playCachedReaction(msg.reaction);
+          }
           break;
         
         case 'system':

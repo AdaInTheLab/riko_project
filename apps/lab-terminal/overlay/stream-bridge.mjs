@@ -88,21 +88,16 @@ async function askSage(text, context) {
 // ═══════════════════════════════════════
 // Send to overlay (text display)
 // ═══════════════════════════════════════
-function sendToOverlay(text, scared = false, isReaction = false) {
+function sendToOverlay(text, scared = false, reactionKey = null) {
   const msg = {
     type: scared ? 'sage-emote' : 'sage-speak',
     text: text,
     scared: scared,
-    tts: !isReaction, // Skip TTS for reactions (cached audio plays instead)
+    reaction: reactionKey || null, // If set, overlay plays cached audio
   };
   
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
-  }
-  
-  // For reactions, tell overlay to play cached audio
-  if (isReaction) {
-    // The overlay handles this via the REACTIONS lookup
   }
 }
 
@@ -127,17 +122,17 @@ async function processInput(text) {
   }
   
   if (result.type === 'reaction') {
-    // Pre-built reaction — instant!
+    // Pre-built reaction — instant audio!
     const reactionKey = result.response;
     const displayText = REACTION_TEXT[reactionKey] || reactionKey;
     
     console.log(`${C.fox}  [SAGE] ⚡ ${displayText} (cached: ${reactionKey})${C.reset}`);
-    sendToOverlay(displayText, result.scared, true);
+    sendToOverlay(displayText, result.scared, reactionKey);
     
   } else {
-    // Custom response — needs live TTS
+    // Custom response — text only (live TTS too slow for stream)
     console.log(`${C.fox}  [SAGE] ${result.response}${C.reset}`);
-    sendToOverlay(result.response, result.scared, false);
+    sendToOverlay(result.response, result.scared, null);
   }
   
   processing = false;
