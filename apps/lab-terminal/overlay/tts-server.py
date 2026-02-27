@@ -1,19 +1,21 @@
 """
-Sage TTS Server — Wraps Qwen3-TTS VoiceDesign in a FastAPI endpoint.
+Sage TTS Server — Uses cached voice clone prompt for fast generation.
 
 Endpoints:
-  POST /speak  {"text": "...", "instruct": "..."}  → returns WAV audio
-  POST /speak/stream  {"text": "..."}  → returns streaming audio (future)
+  POST /speak  {"text": "...", "scared": false}  → returns WAV audio
+  POST /speak/json  {"text": "..."}  → saves to file, returns metadata
   GET  /health  → status check
 
 Run:
   python tts-server.py
 
-Requires: qwen-tts, fastapi, uvicorn (all installed with qwen-tts)
+Requires: qwen-tts, fastapi, uvicorn, soundfile
 """
 
 import io
+import os
 import torch
+import pickle
 import soundfile as sf
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -37,66 +39,77 @@ app.add_middleware(
 # Model loading (once at startup)
 # ═══════════════════════════════════════
 model = None
-SAGE_VOICE_INSTRUCT = (
-    "A warm, slightly low-pitched androgynous voice. "
-    "Playful but grounded, like someone telling you a story by a campfire. "
-    "Gentle breathiness when excited. "
-    "Natural, expressive cadence with a hint of mischief."
-)
+voice_clone_prompt = None
+
+VOICE_CACHE_DIR = "voice_cache"
+CLONE_PROMPT_PATH = os.path.join(VOICE_CACHE_DIR, "sage_clone_prompt.pkl")
 
 def load_model():
-    global model
-    print("Loading Qwen3-TTS VoiceDesign model...")
+    global model, voice_clone_prompt
+    
+    # Load cached clone prompt
+    if not os.path.exists(CLONE_PROMPT_PATH):
+        print("ERROR: No cached voice clone prompt found!")
+        print("Run setup-sage-voice.py first to generate it.")
+        return
+    
+    print("Loading cached voice clone prompt...")
+    with open(CLONE_PROMPT_PATH, "rb") as f:
+        voice_clone_prompt = pickle.load(f)
+    print("  ✓ Clone prompt loaded")
+    
+    # Load the 1.7B Base model (NOT VoiceDesign — faster with cached prompt)
+    print("Loading Qwen3-TTS 1.7B Base model...")
     from qwen_tts import Qwen3TTSModel
     model = Qwen3TTSModel.from_pretrained(
-        "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+        "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
         device_map="cuda:0",
         dtype=torch.bfloat16,
     )
-    print("Model loaded! Sage has a voice. 🦊")
+    
+    # Warmup generation
+    print("Warming up...")
+    start = time.time()
+    wavs, sr = model.generate_voice_clone(
+        text="Hello world, Sage is online.",
+        language="English",
+        voice_clone_prompt=voice_clone_prompt,
+    )
+    elapsed = (time.time() - start) * 1000
+    print(f"  ✓ Warmup: {elapsed:.0f}ms")
+    print("Sage has a voice. 🦊")
 
 # ═══════════════════════════════════════
 # API models
 # ═══════════════════════════════════════
 class SpeakRequest(BaseModel):
     text: str
-    instruct: Optional[str] = None  # Override voice style (defaults to Sage)
     language: Optional[str] = "English"
-    scared: Optional[bool] = False  # Adjust voice for scare moments
-
-class SpeakResponse(BaseModel):
-    ok: bool
-    duration_ms: float
-    text: str
+    scared: Optional[bool] = False
 
 # ═══════════════════════════════════════
 # Endpoints
 # ═══════════════════════════════════════
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model_loaded": model is not None, "voice": "sage"}
+    return {
+        "status": "ok",
+        "model_loaded": model is not None,
+        "voice": "sage-clone",
+        "mode": "cached_prompt",
+    }
 
 @app.post("/speak")
 async def speak(req: SpeakRequest):
-    if model is None:
+    if model is None or voice_clone_prompt is None:
         return JSONResponse(status_code=503, content={"error": "Model not loaded yet"})
-    
-    # Use scared instruct if flagged
-    instruct = req.instruct or SAGE_VOICE_INSTRUCT
-    if req.scared and not req.instruct:
-        instruct = (
-            "A warm androgynous voice that is currently panicking. "
-            "Slightly higher pitch than normal, words coming faster, "
-            "breathless and alarmed but trying to sound calm and failing. "
-            "Like someone who just saw something terrifying and is pretending they didn't."
-        )
     
     start = time.time()
     
-    wavs, sr = model.generate_voice_design(
+    wavs, sr = model.generate_voice_clone(
         text=req.text,
         language=req.language,
-        instruct=instruct,
+        voice_clone_prompt=voice_clone_prompt,
     )
     
     elapsed = (time.time() - start) * 1000
@@ -119,34 +132,26 @@ async def speak(req: SpeakRequest):
 
 @app.post("/speak/json")
 async def speak_json(req: SpeakRequest):
-    """Same as /speak but saves to file and returns metadata (for overlay integration)."""
-    if model is None:
+    """Same as /speak but saves to file and returns metadata."""
+    if model is None or voice_clone_prompt is None:
         return JSONResponse(status_code=503, content={"error": "Model not loaded yet"})
-    
-    instruct = req.instruct or SAGE_VOICE_INSTRUCT
-    if req.scared and not req.instruct:
-        instruct = (
-            "A warm androgynous voice that is currently panicking. "
-            "Slightly higher pitch than normal, words coming faster, "
-            "breathless and alarmed but trying to sound calm and failing."
-        )
     
     start = time.time()
     
-    wavs, sr = model.generate_voice_design(
+    wavs, sr = model.generate_voice_clone(
         text=req.text,
         language=req.language,
-        instruct=instruct,
+        voice_clone_prompt=voice_clone_prompt,
     )
     
     elapsed = (time.time() - start) * 1000
     
-    # Save to file for audio playback
     outpath = "sage_latest.wav"
     sf.write(outpath, wavs[0], sr)
     
-    # Calculate duration
     duration_s = len(wavs[0]) / sr
+    
+    print(f"[SAGE TTS] {elapsed:.0f}ms | {duration_s:.1f}s audio | {req.text[:60]}")
     
     return {
         "ok": True,
