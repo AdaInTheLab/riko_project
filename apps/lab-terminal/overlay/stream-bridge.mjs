@@ -94,12 +94,13 @@ async function askSage(text, context) {
 // ═══════════════════════════════════════
 // Send to overlay (text display)
 // ═══════════════════════════════════════
-function sendToOverlay(text, scared = false, reactionKey = null) {
+function sendToOverlay(text, scared = false, reactionKey = null, tts = false) {
   const msg = {
     type: scared ? 'sage-emote' : 'sage-speak',
     text: text,
     scared: scared,
     reaction: reactionKey || null, // If set, overlay plays cached audio
+    tts: tts, // If true, overlay calls live TTS
   };
   
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -138,9 +139,9 @@ async function processInput(text) {
     sendToOverlay(displayText, result.scared, reactionKey);
     
   } else {
-    // Custom response — text only (live TTS too slow for stream)
+    // Custom response — send to overlay with live TTS
     console.log(`${C.fox}  [SAGE] ${result.response}${C.reset}`);
-    sendToOverlay(result.response, result.scared, null);
+    sendToOverlay(result.response, result.scared, null, true);
   }
   
   processing = false;

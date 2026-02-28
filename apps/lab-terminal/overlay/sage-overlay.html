@@ -662,8 +662,10 @@ function connect() {
           if (msg.reaction) {
             // Cached reaction — play instantly
             playCachedReaction(msg.reaction);
+          } else if (msg.tts) {
+            // Live TTS for custom lines
+            playTTS(msg.text, msg.scared || false);
           }
-          // No live TTS for custom lines (too slow) — text only
           break;
         
         case 'sage-command':
@@ -676,6 +678,8 @@ function connect() {
           typeText(msg.text);
           if (msg.reaction) {
             playCachedReaction(msg.reaction);
+          } else if (msg.tts) {
+            playTTS(msg.text, true);
           }
           break;
         
