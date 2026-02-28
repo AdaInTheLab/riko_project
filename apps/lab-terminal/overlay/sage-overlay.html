@@ -594,6 +594,61 @@ async function processAudioQueue() {
   }
 }
 
+// Stream audio queue — plays decoded AudioBuffers back-to-back
+let streamQueue = [];
+let isPlayingStream = false;
+
+async function processStreamAudioQueue() {
+  if (streamQueue.length === 0) {
+    isPlayingStream = false;
+    return;
+  }
+  
+  isPlayingStream = true;
+  const audioBuffer = streamQueue.shift();
+  
+  // Stop any current playback
+  if (currentAudio) {
+    try { currentAudio.stop(); } catch(e) {}
+  }
+  
+  const source = audioCtx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(audioCtx.destination);
+  source.start(0);
+  currentAudio = source;
+  
+  console.log(`[SAGE TTS] Playing chunk (${audioBuffer.duration.toFixed(1)}s) | Queue: ${streamQueue.length}`);
+  
+  source.onended = () => {
+    currentAudio = null;
+    // Small gap between chunks for natural pacing
+    setTimeout(processStreamAudioQueue, 100);
+  };
+}
+
+async function playTTSFallback(text, scared) {
+  try {
+    const res = await fetch(`${TTS_URL}/speak`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, scared })
+    });
+    if (!res.ok) return;
+    const arrayBuffer = await res.arrayBuffer();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    const source = audioCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioCtx.destination);
+    source.start(0);
+    currentAudio = source;
+    source.onended = () => { currentAudio = null; };
+    console.log(`[SAGE TTS] Fallback playing ${audioBuffer.duration.toFixed(1)}s`);
+  } catch(e) {
+    console.warn('[SAGE TTS] Fallback failed:', e.message);
+  }
+}
+
 async function playTTS(text, scared = false) {
   // Check reaction bank first for instant playback
   const cached = REACTIONS[text];
@@ -602,9 +657,9 @@ async function playTTS(text, scared = false) {
     if (played) return;
   }
   
-  // Fall through to live TTS generation
+  // Fall through to live TTS generation (chunked streaming)
   try {
-    const res = await fetch(`${TTS_URL}/speak`, {
+    const res = await fetch(`${TTS_URL}/speak/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, scared })
@@ -612,31 +667,52 @@ async function playTTS(text, scared = false) {
     
     if (!res.ok) {
       console.warn('[SAGE TTS] Server error:', res.status);
-      return;
+      // Fallback to non-streaming
+      return await playTTSFallback(text, scared);
     }
     
-    const arrayBuffer = await res.arrayBuffer();
-    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    const reader = res.body.getReader();
+    let buffer = new Uint8Array(0);
+    let chunkIndex = 0;
     
-    // Stop any current playback
-    if (currentAudio) {
-      try { currentAudio.stop(); } catch(e) {}
+    // Read the stream and play chunks as they arrive
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      // Append new data to buffer
+      const newBuf = new Uint8Array(buffer.length + value.length);
+      newBuf.set(buffer);
+      newBuf.set(value, buffer.length);
+      buffer = newBuf;
+      
+      // Try to extract complete chunks (4-byte length prefix + WAV data)
+      while (buffer.length >= 4) {
+        const view = new DataView(buffer.buffer, buffer.byteOffset, 4);
+        const chunkLen = view.getUint32(0, false); // big-endian
+        
+        if (buffer.length < 4 + chunkLen) break; // incomplete chunk
+        
+        const wavData = buffer.slice(4, 4 + chunkLen);
+        buffer = buffer.slice(4 + chunkLen);
+        
+        chunkIndex++;
+        console.log(`[SAGE TTS] Chunk ${chunkIndex} received (${(wavData.length/1024).toFixed(0)}KB)`);
+        
+        // Queue chunk for playback
+        try {
+          const audioBuffer = await audioCtx.decodeAudioData(wavData.buffer.slice(wavData.byteOffset, wavData.byteOffset + wavData.length));
+          streamQueue.push(audioBuffer);
+          if (!isPlayingStream) processStreamAudioQueue();
+        } catch(e) {
+          console.warn('[SAGE TTS] Decode failed for chunk', chunkIndex, e);
+        }
+      }
     }
     
-    const source = audioCtx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(audioCtx.destination);
-    source.start(0);
-    currentAudio = source;
-    
-    // Keep overlay active for duration of audio
-    source.onended = () => {
-      currentAudio = null;
-    };
-    
-    console.log(`[SAGE TTS] Playing ${audioBuffer.duration.toFixed(1)}s`);
+    console.log(`[SAGE TTS] Stream complete: ${chunkIndex} chunks`);
   } catch(e) {
-    console.warn('[SAGE TTS] Failed:', e.message);
+    console.warn('[SAGE TTS] Stream failed:', e.message);
   }
 }
 

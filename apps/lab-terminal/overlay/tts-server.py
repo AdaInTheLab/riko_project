@@ -14,8 +14,10 @@ Requires: qwen-tts, fastapi, uvicorn, soundfile
 
 import io
 import os
+import re
 import torch
 import pickle
+import struct
 import soundfile as sf
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -161,6 +163,67 @@ async def speak_json(req: SpeakRequest):
         "text": req.text,
         "scared": req.scared,
     }
+
+# ═══════════════════════════════════════
+# Chunked streaming — split text, send audio as chunks arrive
+# ═══════════════════════════════════════
+def split_into_chunks(text: str) -> list[str]:
+    """Split text at natural pause points for chunked TTS."""
+    # Split on sentence endings, commas, semicolons, dashes
+    parts = re.split(r'(?<=[.!?])\s+|(?<=[,;])\s+|(?:\s*—\s*)', text)
+    
+    # Merge tiny fragments (< 15 chars) with the previous chunk
+    chunks = []
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if chunks and len(part) < 15:
+            chunks[-1] = chunks[-1] + " " + part
+        else:
+            chunks.append(part)
+    
+    # If we ended up with just one chunk, return as-is
+    return chunks if chunks else [text]
+
+@app.post("/speak/stream")
+async def speak_stream(req: SpeakRequest):
+    """Stream audio in chunks — first audio arrives faster."""
+    if model is None or voice_clone_prompt is None:
+        return JSONResponse(status_code=503, content={"error": "Model not loaded yet"})
+    
+    chunks = split_into_chunks(req.text)
+    print(f"[SAGE TTS STREAM] {len(chunks)} chunks: {[c[:30] for c in chunks]}")
+    
+    async def generate_chunks():
+        for i, chunk_text in enumerate(chunks):
+            start = time.time()
+            
+            wavs, sr = model.generate_voice_clone(
+                text=chunk_text,
+                language=req.language,
+                voice_clone_prompt=voice_clone_prompt,
+            )
+            
+            elapsed = (time.time() - start) * 1000
+            print(f"[SAGE TTS STREAM] chunk {i+1}/{len(chunks)}: {elapsed:.0f}ms | {chunk_text[:40]}")
+            
+            # Convert to WAV bytes
+            buf = io.BytesIO()
+            sf.write(buf, wavs[0], sr, format="WAV")
+            wav_bytes = buf.getvalue()
+            
+            # Send length-prefixed chunk: 4 bytes (big-endian uint32) + WAV data
+            yield struct.pack('>I', len(wav_bytes)) + wav_bytes
+    
+    return StreamingResponse(
+        generate_chunks(),
+        media_type="application/octet-stream",
+        headers={
+            "X-Chunks": str(len(chunks)),
+            "X-Scared": str(req.scared).lower(),
+        }
+    )
 
 # ═══════════════════════════════════════
 # Startup
