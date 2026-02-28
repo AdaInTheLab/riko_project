@@ -21,12 +21,15 @@ const clients = {
   web: new Set()
 };
 
-// Send to all overlays
+// Send to first connected overlay only (prevents duplicate TTS calls)
 function toOverlays(data) {
   const payload = JSON.stringify(data);
-  clients.overlays.forEach(ws => {
-    if (ws.readyState === ws.OPEN) ws.send(payload);
-  });
+  for (const ws of clients.overlays) {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(payload);
+      return; // Only send to first active overlay
+    }
+  }
 }
 
 // Broadcast to all except sender

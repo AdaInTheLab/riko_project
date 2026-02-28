@@ -649,7 +649,19 @@ async function playTTSFallback(text, scared) {
   }
 }
 
+let lastTTSText = '';
+let lastTTSTime = 0;
+
 async function playTTS(text, scared = false) {
+  // Deduplicate — skip if same text within 5 seconds
+  const now = Date.now();
+  if (text === lastTTSText && now - lastTTSTime < 5000) {
+    console.log('[SAGE TTS] Skipping duplicate:', text.substring(0, 40));
+    return;
+  }
+  lastTTSText = text;
+  lastTTSTime = now;
+
   // Check reaction bank first for instant playback
   const cached = REACTIONS[text];
   if (cached) {
