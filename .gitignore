@@ -72,3 +72,5 @@ USER.md
 # local tooling
 .serena/
 /.idea/
+
+apps/lab-terminal/overlay/latest_screenshot.jpg
